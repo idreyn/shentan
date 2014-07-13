@@ -1,4 +1,4 @@
-# shentan -- a tool for hunting down Chinese vocabulary
+## shentan -- a tool for hunting down Chinese vocabulary
 
 Anyone learning to read Chinese will tell you that it can be a slow-going experience. Learners read with the intent of expanding their vocabulary,
 but encountering an unfamiliar word means a trip to a dictionary to look it up and memorize the pronunciation. A learner of Spanish may see the word _helado_,
