@@ -8,7 +8,7 @@ http://zhongwen-chrome.blogspot.com/) exist, but no tool can be a complete solut
 
 The shentan command line tool is easy to use:
 
-	./shentan [num-characters-i-know] [source-file-or-url] [-q is for quiet]
+	./shentan.py [num-characters-i-know] [source-file-or-url] [-q is for quiet]
 
 I'll be expanding it soon to include things like flashcard exporting!
 
