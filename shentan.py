@@ -17,21 +17,25 @@ def relative_path(filename):
 	return os.path.join(os.path.dirname(__file__), filename)
 
 class CSVDict(object):
-	def __init__(self,filename,keys,delimiter=','):
+	def __init__(self,filename,keys,delimiter=',',key_index=0):
 		self.filename = filename
 		self.keys = keys
+		self.key_index = key_index
 		self.delimiter = delimiter
-		self.entries = []
-		self.load()
+		self.entries = {}
+		for item, last in self.load():
+			yield item, last
 
 	def load(self):
-		self.entries = []
+		self.entries = {}
 		with open(self.filename, "rb") as file:
 			reader = unicodecsv.reader(file,delimiter=self.delimiter)
 		        count = 0
+		        last = None
 		        for row in reader:
-		        	self.entries.append(row)
-		return self.entries
+		        	self.entries[row[self.key_index]] = row
+		        	yield row[self.key_index], last
+		        	last = row[self.key_index]
 
 	def entry(self,i):
 		try:
@@ -45,67 +49,50 @@ class CSVDict(object):
 
 class CharsDict(CSVDict):
 	def __init__(self):
-		super(CharsDict, self).__init__(
+		for this, prev in super(CharsDict, self).__init__(
 			filename=relative_path('characters.csv'),
-			keys=['index','character','raw_frequency','frequency','pinyin','definition'],
-			delimiter='	'
-		)
-
-	def weight(self,i):
-		if i == 0:
-			return float(self.entry(0)['frequency'])
-		else:
-			return float(self.entry(i)['frequency']) - float(self.entry(i-1)['frequency'])
+			keys=['index','character','raw_frequency','frequency','pinyin','definition','weight'],
+			delimiter='	',
+			key_index=1
+		):
+			# 3 is the index of 'frequency' in the keys array
+			if prev:
+				self.entries[this] += [float(self.entries[this][3]) - float(self.entries[prev][3])]
+			else:
+				self.entries[this] += [float(self.entries[this][3])]
 
 	def lookup(self,char):
-		if type(char) == int or type(char) == float:
-			char = int(char)
+		try:
 			res = self.entry(char)
-			res['weight'] = self.weight(char)
 			return res
-		else:
-			for i, e in enumerate(self.entries):
-				if e[1] == char:
-					res = self.entry(i)
-					res['weight'] = self.weight(i)
-					return res
-		return False
+		except:
+			return False
 
 class CEDICT(CSVDict):
 	def __init__(self):
-		super(CEDICT,self).__init__(
+		list(super(CEDICT,self).__init__(
 			filename=relative_path('cedict.csv'),
 			keys=['characters-traditional','characters','pinyin','definition'],
-			delimiter='$'
-		)
+			delimiter='$',
+			key_index=1
+		))
 
 	def lookup(self,chars):
-		if type(chars) == int or type(chars) == float:
-			return self.entry(int(chars))
-		else:
-			for i, e in enumerate(self.entries):
-				if e[0] == chars or e[1] == chars:
-					return self.entry(i)
-		return False
+		return self.entry(chars)
 
 
 
 class BigramsDict(CSVDict):
 	def __init__(self):
-		super(BigramsDict,self).__init__(
+		list(super(BigramsDict,self).__init__(
 			filename=relative_path('bigrams.csv'),
 			keys=['index','characters','frequency','mutual_information','serial_number'],
-			delimiter='	'
-		)
+			delimiter='	',
+			key_index=1
+		))
 
 	def lookup(self,chars):
-		if type(chars) == int or type(chars) == float:
-			return self.entry(int(chars))
-		else:
-			for i, e in enumerate(self.entries):
-				if e[1] == chars:
-					return self.entry(i)
-		return False
+		return self.entry(chars)
 
 class KnowledgeBase(object):
 	def __init__(self,known_characters=1000):
@@ -116,12 +103,10 @@ class KnowledgeBase(object):
 
 	def get_char(self,i):
 		char = self.characters.entry(i)['character']
-		print char.encode('utf-8')
 		return char
 
 	def get_bigram(self,i):
 		chars = self.bigrams.entry(i)['characters']
-		print chars.encode('utf-8')
 		return chars
 
 	def prob_char_known(self,char):
@@ -165,14 +150,15 @@ class KnowledgeBase(object):
 
 	def prob_word_known(self,word):
 		if len(word) == 1:
-			return self.prob_char_known(word)
+			p = self.prob_char_known(word)
 		if len(word) == 2 and self.bigrams.lookup(word):
-			return self.prob_bigram_known(word)
+			p = self.prob_bigram_known(word)
 		else:
 			p = 1
 			for c in word:
 				p *= self.prob_char_known(c)
-			return p
+		return p
+
 
 	def do_know_char(self,char):
 		threshold = 0.5
@@ -212,7 +198,7 @@ class Shentan(object):
 
 	def analyze(self,text):
 		pointer = 0
-		words = []
+		words = set()
 		if not self.quiet:
 			print ''
 		while pointer < len(text):
@@ -225,14 +211,15 @@ class Shentan(object):
 				continue
 			lookup = char
 			forward = 1
-			while True:
+			while pointer + forward < len(text):
 				check = self.knowledge.cedict.lookup(text[pointer:pointer+forward])
 				if check:
 					lookup = text[pointer:pointer+forward]
 					forward += 1
 				else: 
 					break
-			words.append(lookup)
+			if self.knowledge.prob_word_known(lookup) < 0.5:
+				words.add(lookup)
 			pointer += len(lookup)
 			# Talk about the thing
 			if not self.quiet:
@@ -243,12 +230,6 @@ class Shentan(object):
 			sys.stdout.write("\033[F")
 			print 'Shentan is doing its thing... ' + '(' + str(len(text)) + '/' + str(len(text)) + ')'
 		# Print the results
-		words = filter(lambda word: self.knowledge.prob_word_known(word) < 0.5,words)
-		def f7(seq):
-		    seen = set()
-		    seen_add = seen.add
-		    return [ x for x in seq if not (x in seen or seen_add(x))]
-		words = f7(words)
 		if not self.quiet:
 			print ''
 			if len(words) > 0:
@@ -271,8 +252,11 @@ class Shentan(object):
 @click.argument('known-characters', default=1000)
 @click.argument('text-source',required=False)
 def main(known_characters,q,text_source=None):
-	s = Shentan(known_characters,q)
-	s.analyze_from_source(text_source)
+	try:
+		s = Shentan(known_characters,q)
+		s.analyze_from_source(text_source)
+	except:
+		print "That didn't work. Run Shentan with the --help flag for usage help."
 
 if __name__ == '__main__':
 	main()
