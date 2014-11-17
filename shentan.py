@@ -23,6 +23,7 @@ class CSVDict(object):
 		self.key_index = key_index
 		self.delimiter = delimiter
 		self.entries = {}
+		self.length = 0
 		for item, last in self.load():
 			yield item, last
 
@@ -33,14 +34,16 @@ class CSVDict(object):
 		        count = 0
 		        last = None
 		        for row in reader:
-		        	self.entries[row[self.key_index]] = row
-		        	yield row[self.key_index], last
-		        	last = row[self.key_index]
+		        	if not self.entries.get(row[self.key_index]):
+			        	self.length += 1
+			        	self.entries[row[self.key_index]] = row
+			        	yield row[self.key_index], last
+			        	last = row[self.key_index]
 
 	def entry(self,i):
 		try:
 			entry = self.entries[i]
-			res = { self.keys[i]:entry[i] for i in range(0,len(entry)) }
+			res = { self.keys[i]:entry[i] for i in range(0,min(len(entry),len(self.keys))) }
 			if res.get('definition'):
 				res['definition'] = res['definition'].split('/')
 			return res
@@ -49,9 +52,10 @@ class CSVDict(object):
 
 class CharsDict(CSVDict):
 	def __init__(self):
+		index = 1
 		for this, prev in super(CharsDict, self).__init__(
 			filename=relative_path('characters.csv'),
-			keys=['index','character','raw_frequency','frequency','pinyin','definition','weight'],
+			keys=['index','character','raw_frequency','frequency','pinyin','definition','weight','index'],
 			delimiter='	',
 			key_index=1
 		):
@@ -60,6 +64,8 @@ class CharsDict(CSVDict):
 				self.entries[this] += [float(self.entries[this][3]) - float(self.entries[prev][3])]
 			else:
 				self.entries[this] += [float(self.entries[this][3])]
+			self.entries[this] += [index]
+			index += 1
 
 	def lookup(self,char):
 		try:
@@ -69,18 +75,22 @@ class CharsDict(CSVDict):
 			return False
 
 class CEDICT(CSVDict):
-	def __init__(self):
+	def __init__(self,key_index=1):
 		list(super(CEDICT,self).__init__(
 			filename=relative_path('cedict.csv'),
 			keys=['characters-traditional','characters','pinyin','definition'],
 			delimiter='$',
-			key_index=1
+			key_index=key_index
 		))
 
 	def lookup(self,chars):
 		return self.entry(chars)
 
-
+class TraditionalCEDICT(CEDICT):
+	def __init__(self):
+		super(TraditionalCEDICT,self).__init__(
+			key_index=0
+		)
 
 class BigramsDict(CSVDict):
 	def __init__(self):
@@ -99,6 +109,7 @@ class KnowledgeBase(object):
 		self.known_characters= known_characters
 		self.characters = CharsDict()
 		self.cedict = CEDICT()
+		self.trad_cedict = TraditionalCEDICT()
 		self.bigrams = BigramsDict()
 
 	def get_char(self,i):
@@ -113,25 +124,17 @@ class KnowledgeBase(object):
 		# Wait, is it a Latin character?
 		if char in 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789':
 			return 1
-		# Weighted random sample
-		# Pull (known) from (total) without replacement
-		# What are the odds that (char) is in sample?
-		# Sum n=1..known: P(char in pull n)
+
 		lookup = self.characters.lookup(char)
 		if not lookup:
 			return 0
-		total = len(self.characters.entries)
 		known = self.known_characters
-		scale = 0.82
-		weight = (lookup['weight'] / 100) ** scale
-		p_not_pulled = 1
-		p = 0
-		for i in range(0,known):
-			p_this_pull = p_not_pulled * weight
-			p += p_this_pull
-			p_not_pulled = 1 - p
-			weight = weight * total / (total - 1)
-		return p
+		index = lookup['index']
+		# This is a magic number that denotes the probability that if you
+		# know n characters, you also know the nth character in the frequency list.
+		# Season to taste.
+		prob_head_char_known = 0.5
+		return min(1,prob_head_char_known * (known / index))
 
 	def prob_bigram_known(self,bigram):
 		if(type(bigram) == int or type(bigram) == float):
@@ -142,7 +145,7 @@ class KnowledgeBase(object):
 			chars = bigram
 			bigram = self.bigrams.lookup(chars)
 			if not bigram:
-				return False
+				return 0
 		p = 1
 		for c in chars:
 			p *= self.prob_char_known(c)
@@ -151,14 +154,13 @@ class KnowledgeBase(object):
 	def prob_word_known(self,word):
 		if len(word) == 1:
 			p = self.prob_char_known(word)
-		if len(word) == 2 and self.bigrams.lookup(word):
+		if len(word) == 2:
 			p = self.prob_bigram_known(word)
 		else:
 			p = 1
 			for c in word:
 				p *= self.prob_char_known(c)
 		return p
-
 
 	def do_know_char(self,char):
 		threshold = 0.5
@@ -188,6 +190,25 @@ class Shentan(object):
 		self.quiet = quiet
 		self.knowledge = KnowledgeBase(known_characters)
 
+	def jianti_to_fanti(self,chars):
+		res = ''
+		for c in chars:
+			if entry:
+				res += self.knowledge.cedict.entry(c)['characters-traditional']
+			else:
+				res += c
+		return res
+
+	def fanti_to_jianti(self,chars):
+		res = ''
+		for c in chars:
+			entry = self.knowledge.trad_cedict.entry(c)
+			if entry:
+				res += self.knowledge.trad_cedict.entry(c)['characters']
+			else:
+				res += c
+		return res		
+
 	def analyze_from_source(self,source):
 		if source.startswith('http://') or source.startswith('https://'):
 			text = requests.get(source).text
@@ -198,7 +219,7 @@ class Shentan(object):
 
 	def analyze(self,text):
 		pointer = 0
-		words = set()
+		words = []
 		if not self.quiet:
 			print ''
 		while pointer < len(text):
@@ -213,13 +234,17 @@ class Shentan(object):
 			forward = 1
 			while pointer + forward < len(text):
 				check = self.knowledge.cedict.lookup(text[pointer:pointer+forward])
+				check_trad = self.knowledge.trad_cedict.lookup(text[pointer:pointer+forward])
 				if check:
 					lookup = text[pointer:pointer+forward]
 					forward += 1
-				else: 
+				elif check_trad:
+					lookup = text[pointer:pointer+forward]
+					forward += 1
+				else:
 					break
-			if self.knowledge.prob_word_known(lookup) < 0.5:
-				words.add(lookup)
+			if self.knowledge.prob_word_known(lookup) < 0.5 and not lookup in words:
+				words.append(lookup)
 			pointer += len(lookup)
 			# Talk about the thing
 			if not self.quiet:
@@ -240,11 +265,17 @@ class Shentan(object):
 			print ''
 		for word in words:
 			lookup = self.knowledge.cedict.lookup(word)
+			if not lookup:
+				lookup = self.knowledge.trad_cedict.lookup(word)
 			if lookup:
-				print lookup['characters'].encode('utf-8') + ' ' + lookup['pinyin'].encode('utf-8') + ':'
+				print word.encode('utf-8') + ' ' + lookup['pinyin'].encode('utf-8') + ':'
 				for definition in lookup['definition']:
 					print '\t' + definition.encode('utf-8')
 				print ''
+			else:
+				print word
+				print '\t' + 'No definition found.'
+				print ' '
 
 
 @click.command()
@@ -255,7 +286,8 @@ def main(known_characters,q,text_source=None):
 	try:
 		s = Shentan(known_characters,q)
 		s.analyze_from_source(text_source)
-	except:
+	except Exception as e:
+		print e
 		print "That didn't work. Run Shentan with the --help flag for usage help."
 
 if __name__ == '__main__':
