@@ -17,26 +17,33 @@ def relative_path(filename):
 	return os.path.join(os.path.dirname(__file__), filename)
 
 class CSVDict(object):
-	def __init__(self,filename,keys,delimiter=',',key_index=0):
+	def __init__(self,filename,keys,delimiter=',',key_index=0,filter_variants=False):
 		self.filename = filename
 		self.keys = keys
 		self.key_index = key_index
 		self.delimiter = delimiter
 		self.entries = {}
+		self.entries_list = []
 		self.length = 0
+		self.filter_variants = filter_variants
 		for item, last in self.load():
 			yield item, last
 
 	def load(self):
 		self.entries = {}
-		with open(self.filename, "rb") as file:
+		with open(relative_path(self.filename), "rb") as file:
 			reader = unicodecsv.reader(file,delimiter=self.delimiter)
 		        count = 0
 		        last = None
 		        for row in reader:
 		        	if not self.entries.get(row[self.key_index]):
+		        		if 'definition' in self.keys:
+		        			def_index = self.keys.index('definition')
+		        			if 'variant' in row[def_index] and self.filter_variants:
+		        				continue
 			        	self.length += 1
 			        	self.entries[row[self.key_index]] = row
+			        	self.entries_list.append(row)
 			        	yield row[self.key_index], last
 			        	last = row[self.key_index]
 
@@ -50,11 +57,17 @@ class CSVDict(object):
 		except:
 			return False
 
+	def entry_by_index(self,i):
+		try:
+			return self.entries_list[i]
+		except:
+			return False
+
 class CharsDict(CSVDict):
 	def __init__(self):
 		index = 1
 		for this, prev in super(CharsDict, self).__init__(
-			filename=relative_path('characters.csv'),
+			filename=relative_path('data/characters.csv'),
 			keys=['index','character','raw_frequency','frequency','pinyin','definition','weight','index'],
 			delimiter='	',
 			key_index=1
@@ -77,10 +90,11 @@ class CharsDict(CSVDict):
 class CEDICT(CSVDict):
 	def __init__(self,key_index=1):
 		list(super(CEDICT,self).__init__(
-			filename=relative_path('cedict.csv'),
+			filename=relative_path('data/cedict.csv'),
 			keys=['characters-traditional','characters','pinyin','definition'],
 			delimiter='$',
-			key_index=key_index
+			key_index=key_index,
+			filter_variants=True
 		))
 
 	def lookup(self,chars):
@@ -89,13 +103,13 @@ class CEDICT(CSVDict):
 class TraditionalCEDICT(CEDICT):
 	def __init__(self):
 		super(TraditionalCEDICT,self).__init__(
-			key_index=0
+			key_index=0,
 		)
 
 class BigramsDict(CSVDict):
 	def __init__(self):
 		list(super(BigramsDict,self).__init__(
-			filename=relative_path('bigrams.csv'),
+			filename=relative_path('data/bigrams.csv'),
 			keys=['index','characters','frequency','mutual_information','serial_number'],
 			delimiter='	',
 			key_index=1
@@ -193,6 +207,7 @@ class Shentan(object):
 	def jianti_to_fanti(self,chars):
 		res = ''
 		for c in chars:
+			entry = self.knowledge.cedict.entry(c)
 			if entry:
 				res += self.knowledge.cedict.entry(c)['characters-traditional']
 			else:
