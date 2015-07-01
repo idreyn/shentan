@@ -12,4 +12,4 @@ The shentan command line tool is easy to use:
 
 I'll be expanding it soon to include things like flashcard exporting!
 
-Shentan (神探) is Chinese for "master detective", and it usually refers to either literary figure Di Renjie (狄仁杰) or sometimes, Sherlock Holmes. In Chinese, he is 歇洛克.福尔摩斯, but that just doesn't have the same ring to it.
+Shentan (神探) is Chinese for "master detective", and it usually refers to either historical and literary figure Di Renjie (狄仁杰) or sometimes, Sherlock Holmes. In Chinese, he is 歇洛克.福尔摩斯, but that just doesn't have the same ring to it.
